@@ -1,6 +1,6 @@
 # Complex-Plane-Graphing-Calculator-Basic-
-User Friendly Complex Plane Graphing Calculator for Basic Complex Functions
-NOTE: This project was developed with assistance from AI for coding support
+User Friendly Complex Plane Graphing Calculator for Basic Complex Functions '\n'
+NOTE: This project was developed with assistance from AI for coding support '\n'
 Functions:
 Output graphs of complex functions in the form of a+bi on the complex plane
 Adjustable sliders
