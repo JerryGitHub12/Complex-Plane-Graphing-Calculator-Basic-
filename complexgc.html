@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Complex Plane Graphing Calculator</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.11.0/math.min.js"></script>
+
+<style>
+body {
+    margin: 0;
+    display: flex;
+    font-family: Arial;
+    overflow: hidden;
+}
+
+#panel {
+    width: 320px;
+    background: #f8f8f8;
+    border-right: 1px solid #ddd;
+    padding: 12px;
+    box-sizing: border-box;
+    overflow-y: auto;   
+    overflow-x: hidden; 
+}
+
+.row { margin-bottom: 16px; }
+
+.topRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.icon {
+    font-size: 20px;
+    width: 28px;
+    text-align: center;
+    cursor: pointer;
+}
+
+input[type="text"] {
+    flex: 1;
+    padding: 5px;
+}
+
+.sliderBox {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.sliderBox input[type="number"] { width: 40px; }
+.sliderBox input[type="range"] { flex: 1; min-width: 0; }
+.sliderBox span { width: auto; min-width: 40px; text-align: left; font-size: 12px; }
+
+canvas {
+    flex: 1;
+    display: block;
+}
+</style>
+</head>
+
+<body>
+<div id="panel">
+    <div id="rows"></div>
+</div>
+
+<canvas id="graph"></canvas>
+
+<script>
+
+//CANVAS 
+const canvas = document.getElementById("graph");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+    canvas.width = window.innerWidth - 320;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+let view = {range: 10, min: 1, max: 1000, offsetX: 0, offsetY: 0};
+let expressions = [];
+let clickablePoints = [];
+let selectedPoint = null;
+
+function preprocess(expr) {
+    return expr
+        .replace(/(\d)([a-zA-Z])/g,"$1*$2")
+        .replace(/([a-zA-Z])(\d)/g,"$1*$2")
+        .replace(/([a-hj-zA-HJ-Z])([a-hj-zA-HJ-Z])/g,"$1*$2")
+        .replace(/([a-hj-zA-HJ-Z])i/g,"$1*i")
+        .replace(/i([a-hj-zA-HJ-Z])/g,"i*$1")
+        .replace(/(\d)\(/g,"$1*(")
+        .replace(/\)\(/g,")*(")
+        .replace(/\)([a-zA-Z])/g,")*$1");
+}
+
+//EVAL
+function evaluate(expr, scope={}) {
+    try {
+        if (!expr.trim()) return null;
+        expr = preprocess(expr);
+        const result = math.evaluate(expr, scope);
+        if (result?.re !== undefined) return { r: result.re, i: result.im };
+        if (typeof result === "number") return { r: result, i: 0 };
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+//GRID
+function niceStep(range) {
+    const scale = canvas.width / (2*range);
+    const rough = 80 / scale;
+    const power = Math.pow(10, Math.floor(Math.log10(rough)));
+    const candidates = [1,2,5,10];
+    for (let c of candidates) if (power*c >= rough) return power*c;
+    return power*10;
+}
+
+function formatNumber(n) {
+    if (Math.abs(n) >= 1000 || Math.abs(n) < 0.001) return n.toExponential(1);
+    return parseFloat(n.toFixed(3));
+}
+
+function drawGrid() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const scale = canvas.width / (2*view.range);
+    const cx = canvas.width/2 - view.offsetX*scale;
+    const cy = canvas.height/2 + view.offsetY*scale;
+
+    const step = niceStep(view.range);
+    const count = Math.ceil(view.range / step);
+    const minorStep = step / 5;
+
+//minor
+ctx.strokeStyle = "#f2f2f2"; 
+ctx.lineWidth = 1;
+
+for (let i=-count; i<=count; i++){
+    for (let j=1; j<5; j++){ 
+        const x = cx + (i + j/5) * step * scale;
+        const y = cy - (i + j/5) * step * scale;
+
+        ctx.beginPath();
+        ctx.moveTo(x,0);
+        ctx.lineTo(x,canvas.height);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(0,y);
+        ctx.lineTo(canvas.width,y);
+        ctx.stroke();
+    }
+}
+
+//major
+ctx.strokeStyle="#eee";
+ctx.lineWidth=1;
+    ctx.strokeStyle = "#eee";
+    ctx.lineWidth = 1;
+
+    for (let i=-count; i<=count; i++) {
+        const x = cx + i*step*scale;
+        const y = cy - i*step*scale;
+        ctx.beginPath();
+        ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke();
+    }
+
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0,cy); ctx.lineTo(canvas.width,cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx,0); ctx.lineTo(cx,canvas.height); ctx.stroke();
+
+    ctx.fillStyle = "black";
+    ctx.font = "12px Arial";
+    for (let i=-count;i<=count;i++) {
+        const val=i*step; if(val===0) continue;
+        const x = cx + i*step*scale; const y = cy - i*step*scale;
+        ctx.textAlign="center"; ctx.textBaseline="top"; ctx.fillText(formatNumber(val),x,cy+4);
+        ctx.textAlign="right"; ctx.textBaseline="middle"; ctx.fillText(formatNumber(val),cx-4,y);
+    }
+    ctx.textAlign="left"; ctx.textBaseline="top"; ctx.fillText("0", cx+4, cy+4);
+}
+
+//ROW
+function createRow() {
+    const row=document.createElement("div");
+    row.className="row";
+    row.dataset.line="true"; row.dataset.arg="false";
+
+    const top=document.createElement("div"); top.className="topRow";
+    const eye=document.createElement("span"); eye.className="icon"; eye.textContent="👁";
+    const arg=document.createElement("span"); arg.className="icon"; arg.textContent="∠"; arg.style.opacity="0.3";
+    const color=document.createElement("input"); color.type="color"; color.value="#0066ff";
+    const input=document.createElement("input"); input.type="text"; input.placeholder="Enter complex expression";
+
+    top.append(eye,arg,color,input); row.appendChild(top);
+    const slidersContainer=document.createElement("div"); row.appendChild(slidersContainer);
+    document.getElementById("rows").appendChild(row);
+
+    eye.onclick = ()=> { row.dataset.line = row.dataset.line==="true"?"false":"true"; eye.style.opacity=row.dataset.line==="true"?"1":"0.3"; render(); };
+    arg.onclick = ()=> { row.dataset.arg = row.dataset.arg==="true"?"false":"true"; arg.style.opacity=row.dataset.arg==="true"?"1":"0.3"; render(); };
+
+    function updateSliders() {
+        const cleaned=input.value.replace(/\b(sin|cos|tan|asin|acos|atan|sinh|cosh|tanh|log|ln|sqrt|abs|exp|pow|pi|e)\b/g,"");
+        const vars=[...new Set((cleaned.match(/[a-hj-z]/gi)||[]))];
+        slidersContainer.innerHTML="";
+
+        vars.forEach(letter=>{
+            const box=document.createElement("div"); box.className="sliderBox";
+            const nameLabel=document.createElement("span"); nameLabel.textContent=letter; nameLabel.style.width="18px";
+            const minInput=document.createElement("input"); minInput.type="number"; minInput.value=-10;
+            const slider=document.createElement("input"); slider.type="range"; slider.min=-10; slider.max=10; slider.step=0.1; slider.value=1; slider.dataset.var=letter;
+            const maxInput=document.createElement("input"); maxInput.type="number"; maxInput.value=10;
+            const valueLabel=document.createElement("span");
+
+            function update(){ valueLabel.textContent=parseFloat(slider.value).toFixed(2); render(); }
+            slider.oninput=update;
+            minInput.onchange=()=>{ slider.min=minInput.value; update(); };
+            maxInput.onchange=()=>{ slider.max=maxInput.value; update(); };
+
+            update();
+            box.append(nameLabel,minInput,slider,maxInput,valueLabel);
+            slidersContainer.appendChild(box);
+        });
+        render();
+    }
+
+    input.addEventListener("input", updateSliders);
+    input.addEventListener("keydown", e => { if(e.key==="Enter") createRow(); });
+    color.oninput=render;
+}
+
+for(let i=0;i<6;i++) createRow();
+
+//EXPRESSION
+function updateExpressions(){
+    expressions=[];
+    document.querySelectorAll(".row").forEach(row=>{
+        const input=row.querySelector("input[type=text]");
+        const sliders=row.querySelectorAll("input[type=range]");
+        const color=row.querySelector("input[type=color]");
+        let scope={};
+        sliders.forEach(s=>scope[s.dataset.var]=parseFloat(s.value));
+        const z=evaluate(input.value,scope);
+        if(z) expressions.push({ ...z, color:color.value, line:row.dataset.line==="true", arg:row.dataset.arg==="true" });
+    });
+}
+
+//DRAW
+function drawPoints() {
+    clickablePoints=[];
+    const scale = canvas.width/(2*view.range);
+    const cx = canvas.width/2 - view.offsetX*scale;
+    const cy = canvas.height/2 + view.offsetY*scale;
+
+    expressions.forEach(z=>{
+        if(!z.line) return;
+        const x=cx + z.r*scale;
+        const y=cy - z.i*scale;
+        const angle=Math.atan2(z.i,z.r);
+        const mag=Math.hypot(z.r,z.i);
+
+        // line
+        ctx.strokeStyle=z.color;
+        ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(x,y); ctx.stroke();
+
+        // arc
+        if(z.arg && mag>0){
+            ctx.strokeStyle=z.color;
+            const r=Math.min(40, mag*scale*0.3);
+            ctx.beginPath(); ctx.arc(cx, cy, r, 0, -angle, angle>0); ctx.stroke();
+        }
+
+        // point
+        ctx.beginPath(); ctx.arc(x,y,5,0,Math.PI*2); ctx.fillStyle="#555"; ctx.fill();
+
+        clickablePoints.push({x,y,r:z.r,i:z.i,arg:angle,showArg:z.arg});
+    });
+
+    drawSelected();
+}
+
+function drawSelected() {
+    if(!selectedPoint) return;
+    const scale = canvas.width/(2*view.range);
+    const cx = canvas.width/2 - view.offsetX*scale;
+    const cy = canvas.height/2 + view.offsetY*scale;
+    const sx = cx + selectedPoint.r*scale;
+    const sy = cy - selectedPoint.i*scale;
+
+    ctx.fillStyle="black"; ctx.font="14px Arial";
+    let text = `(${selectedPoint.r.toFixed(3)}, ${selectedPoint.i.toFixed(3)})`;
+    if(selectedPoint.showArg) text += `   arg=${selectedPoint.arg.toFixed(3)} rad`;
+    ctx.fillText(text, sx+8, sy-8);
+}
+
+function render(){ drawGrid(); updateExpressions(); drawPoints(); }
+
+//CLICK
+canvas.addEventListener("click", e=>{
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    selectedPoint = null;
+    for(let p of clickablePoints) if(Math.hypot(mx-p.x,my-p.y)<=6){ selectedPoint=p; break; }
+    render();
+});
+
+//ZOOM+MOVE
+let dragging=false, lastX=0, lastY=0;
+
+canvas.onmousedown=e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; canvas.style.cursor="grabbing"; };
+canvas.onmousemove=e=>{
+    if(!dragging) return;
+    const scale=canvas.width/(2*view.range);
+    view.offsetX-=(e.clientX-lastX)/scale;
+    view.offsetY+=(e.clientY-lastY)/scale;
+    lastX=e.clientX; lastY=e.clientY;
+    render();
+};
+canvas.onmouseup=canvas.onmouseleave=()=>{ dragging=false; canvas.style.cursor="default"; };
+
+canvas.onwheel=e=>{
+    e.preventDefault();
+    view.range *= e.deltaY<0 ? 0.9 : 1.1;
+    view.range = Math.max(view.min, Math.min(view.max, view.range));
+    render();
+};
+
+render();
+</script>
+</body>
+</html>
